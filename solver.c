@@ -1,17 +1,8 @@
-// Runs the wordle solver -- you can either specify a word for it to search
-// towards, like this:
-// $ ./solver <secret word>
-//
-// Or if you don't specify a secret word, then it will supply you with guesses
-// and ask for the feedback from a different instance of wordle.
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-#include "search_util.h"
 
 // Returns true if the guess is an exact match with the secret word, but
 // more importantly, fills in the result with the following:
@@ -24,24 +15,38 @@
 //   You can assume that result points at enough memory for a string of length
 //   5. (ie, at least 6 bytes long)
 bool score_guess(char *secret, char *guess, char *result) {
-  for (int i = 0; i < 5; i++) {
-    result[i] = 'x';
+  if(strcmp(secret, guess) == 0) {
+          return true;
   }
+  for (int i = 0; i < (int)strlen(secret); i++) {
+          result[i] = 'x';
+          if(secret[i] == guess[i]) {
+                  result[i] = 'g';
+          }
+          else {
+                for(int j = 0; j < (int)strlen(secret); j++) {
+                        if(guess[i] == secret[j]) {
+                                result[i] = 'y';
+                                break;
+                        }
+                }
+          }
 
-  for (int i = 0; i < 5; i++) {
-    for (int j = 0; j < 5; j++) {
-      if (guess[i] == secret[j]) {
-        result[i] = 'y';
-      }
-    }
   }
+  return false;
+}
 
-  for (int i = 0; i < 5; i++) {
-    if (guess[i] == secret[i]) {
-      result[i] = 'g';
-    }
+// Returns true if the specified guess is one of the strings in the vocabulary,
+// and false otherwise. num_words is the length of the vocabulary.
+// A simple linear scan over the strings in vocabulary is fine for our purposes,
+// but consider: could you do this search more quickly?
+bool valid_guess(char *guess, char **vocabulary, size_t num_words) {
+  for(int i = 0; i < (int)num_words; i++) {
+        if(strcmp(guess, vocabulary[i]) == 0) {
+                return true;
+        }
   }
-  return strncmp(secret, guess, 5) == 0;
+  return false;
 }
 
 // Returns an array of strings (so, char **), where each string contains a word
@@ -59,117 +64,78 @@ bool score_guess(char *secret, char *guess, char *result) {
 // Each element of the array should be a single five-letter word,
 // null-terminated.
 char **load_vocabulary(char *filename, size_t *num_words) {
-  char **out = NULL;
-  size_t n = 0;
-  char buf[10];
-  size_t array_size = 1;
-  out = (char **)calloc(sizeof(char *), array_size);
-  FILE *infile = fopen(filename, "r");
-  while (fgets(buf, 10, infile) != NULL) {
-    n++;
-    if (n >= array_size) {
-      array_size *= 2;
-      out = (char **)realloc(out, sizeof(char *) * array_size);
-    }
-    out[n - 1] = strndup(buf, 6);
-    out[n - 1][5] = '\0';
+  char **vocab = calloc(1, sizeof(char*));
+  FILE *words = fopen(filename, "r");
+  char buf[6];
+  size_t i = 0;
+  while(fgets(buf, 6, words) != NULL) {
+          vocab[i] = calloc(strlen(buf)+1,sizeof(char));
+          strcpy(vocab[i], buf);
+          i++;
+          char **new = realloc(vocab, (i+1) * sizeof(char *));
+          if (new != NULL) {
+                  vocab = new;
+          }
+          fgets(buf, 6, words);
   }
-  fclose(infile);
-  *num_words = n;
-  return out;
+  fclose(words);
+  *num_words = (size_t)i;
+  return vocab;
 }
 
+// Free each of the strings in the vocabulary, as well as the pointer vocabulary
+// itself (which points to an array of char *).
+void free_vocabulary(char **vocabulary, size_t num_words) {
+  for(int i = 0; i < (int)num_words; i++) {
+          free(vocabulary[i]);
+  }
+  free(vocabulary);
+  vocabulary = NULL;
+}
 
-int main(int argc, char **argv) {
+// Once your other functions are working, please revert your main() to its
+// initial state, but please feel free to change it, during development. You'll
+// want to test out each individual function!
+int main(void) {
   char **vocabulary;
   size_t num_words;
   int num_guesses = 0;
-  char *secret = NULL;
-  char *guess = NULL;
 
-  char result[10] = {0};
-  bool success = false;
-  size_t removed;
+  srand(time(NULL));
 
-  if (argc == 2) {
-    secret = argv[1];
-  }
+  // load up the vocabulary and store the number of words in it.
   vocabulary = load_vocabulary("vocabulary.txt", &num_words);
+  // Randomly select one of the words from the file to be today's SECRET WORD.
+  int word_index = rand() % num_words;
+  //printf("numwords: %zu, rand: %d", num_words, word_index);
+  char *secret = vocabulary[word_index];
+  // input buffer -- we'll use this to get a guess from the user.
+  char guess[80];
+  // buffer for scoring each guess.
+  char result[6] = {0};
+  bool success = false;
 
-  do {
-    free(guess);
-    guess = get_guess(vocabulary, num_words);
-
-    if (guess == NULL) {
-      printf("ran out of ideas?\n");
+  printf("time to guess a 5-letter word! (press ctrl-D to exit)\n");
+  while (!success) {
+    printf("guess: ");
+    if (fgets(guess, 80, stdin) == NULL) {
       break;
     }
-    num_guesses++;
-    printf("GUESS #%d: %s\n", num_guesses, guess);
-
-    if (secret != NULL) {
-      success = score_guess(secret, guess, result);
+    // Whatever the user input, cut it off at 5 characters.
+    guess[5] = '\0';
+    if (!valid_guess(guess, vocabulary, num_words)) {
+      printf("not a valid guess\n");
+      continue;
     } else {
-      bool sensible_result = false;
-
-      while (!sensible_result) {
-        printf("please enter result as 5 characters (g,y,x): ");
-        fgets(result, 10, stdin);
-        result[5] = '\0';
-        sensible_result = true;
-        for (int i = 0; i < 5; i++) {
-          if(result[i] != 'g' && result[i] != 'y' && result[i] != 'x') {
-            sensible_result = false;
-          }
-        }
-      }
-      success = (strncmp(result, "ggggg", 5) == 0);
+      num_guesses++;
     }
-
-    if (!success) {
-      // If we didn't get it right, filter down the vocabulary!
-      for (int i = 0; i < 5; i++) {
-        if (result[i] == 'x') {
-          // only remove words containing this letter if it doesn't occur
-          // elsewhere in the word -- ie, you might have guessed the letter
-          // twice, but it only occurs once. bit of a weird edge case, but this
-          // can happen. This handles the behavior or the official wordle, which
-          // marks letters as gray if you guess them twice but they occur once.
-          char letter = guess[i];
-          bool non_gray_elsewhere = false;
-          for (int j = 0; j < 5; j++) {
-            char other_letter = guess[j];
-            if ((j != i) && (other_letter == letter) && (result[i] != 'x')) {
-              non_gray_elsewhere = true;
-            }
-          }
-          if (!non_gray_elsewhere) {
-            printf("filtering with gray letter: %c\n", guess[i]);
-            removed = filter_vocabulary_gray(guess[i], vocabulary, num_words);
-            printf("removed %lu words.\n", removed);
-          }
-        } else if (result[i] == 'y') {
-          printf("filtering with yellow letter: %c\n", guess[i]);
-          removed =
-              filter_vocabulary_yellow(guess[i], i, vocabulary, num_words);
-          printf("removed %lu words.\n", removed);
-        } else if (result[i] == 'g') {
-          printf("filtering with green letter: %c\n", guess[i]);
-          removed = filter_vocabulary_green(guess[i], i, vocabulary, num_words);
-          printf("removed %lu words.\n", removed);
-        }
-      }
-    }
-  } while (!success);
-
-  if (success) {
-    printf("correct! got it in %d guesses!\n", num_guesses);
-  } else {
-    printf("oh no, could not guess it -- maybe outside the vocabulary?\n");
+    success = score_guess(secret, guess, result);
+    printf("%s\n", guess);
+    printf("%s\n", result);
   }
-
-  free(guess);
+  if (success) {
+    printf("you win, in %d guesses!\n", num_guesses);
+  }
   free_vocabulary(vocabulary, num_words);
-
   return 0;
 }
